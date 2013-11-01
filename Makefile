@@ -1,6 +1,4 @@
-# CXXFLAGS= -O3 -fomit-frame-pointer
-CXXFLAGS= -O2 -pipe -fstack-protector --param=ssp-buffer-size=4 -D_FORTIFY_SOURCE=2
-
+CXXFLAGS= -O3 -fomit-frame-pointer -ffast-math
 override CXXFLAGS+= -Wall -fsigned-char -fno-exceptions -fno-rtti
 
 PLATFORM= $(shell uname -s)
@@ -20,11 +18,25 @@ MV=mv
 ifneq (,$(findstring MINGW,$(PLATFORM)))
 WINDRES= windres
 ifneq (,$(findstring 64,$(PLATFORM)))
+ifneq (,$(findstring CROSS,$(PLATFORM)))
+  CXX=x86_64-w64-mingw32-g++
+  WINDRES=x86_64-w64-mingw32-windres
+ifneq (,$(STRIP))
+  STRIP=x86_64-w64-mingw32-strip
+endif
+endif
 WINLIB=lib64
 WINBIN=../bin64
 override CXX+= -m64
 override WINDRES+= -F pe-x86-64
 else
+ifneq (,$(findstring CROSS,$(PLATFORM)))
+  CXX=i686-w64-mingw32-g++
+  WINDRES=i686-w64-mingw32-windres
+ifneq (,$(STRIP))
+  STRIP=i686-w64-mingw32-strip
+endif
+endif
 WINLIB=lib
 WINBIN=../bin
 override CXX+= -m32
@@ -39,10 +51,14 @@ endif
 CLIENT_LIBS= -mwindows $(STD_LIBS) -L$(WINBIN) -L$(WINLIB) -lSDL -lSDL_image -lSDL_mixer -lzlib1 -lopengl32 -lenet -lws2_32 -lwinmm
 else	
 CLIENT_INCLUDES= $(INCLUDES) -I/usr/X11R6/include `sdl-config --cflags`
-CLIENT_LIBS= -Lenet/.libs -lenet -L/usr/X11R6/lib -lX11 `sdl-config --libs` -lSDL_image -lSDL_mixer -lz -lGL
+CLIENT_LIBS= -Lenet -lenet -L/usr/X11R6/lib -lX11 `sdl-config --libs` -lSDL_image -lSDL_mixer -lz -lGL
 endif
 ifeq ($(PLATFORM),Linux)
 CLIENT_LIBS+= -lrt
+else
+ifneq (,$(findstring GNU,$(PLATFORM)))
+CLIENT_LIBS+= -lrt        
+endif         
 endif
 CLIENT_OBJS= \
 	shared/crypto.o \
@@ -108,7 +124,7 @@ SERVER_LIBS= -mwindows $(STD_LIBS) -L$(WINBIN) -L$(WINLIB) -lzlib1 -lenet -lws2_
 MASTER_LIBS= $(STD_LIBS) -L$(WINBIN) -L$(WINLIB) -lzlib1 -lenet -lws2_32 -lwinmm
 else
 SERVER_INCLUDES= -DSTANDALONE $(INCLUDES)
-SERVER_LIBS= -Lenet/.libs -lenet -lz
+SERVER_LIBS= -Lenet -lenet -lz
 MASTER_LIBS= $(SERVER_LIBS)
 endif
 SERVER_OBJS= \
@@ -133,25 +149,15 @@ CLIENT_LIBS+= -lsocket -lnsl -lX11
 SERVER_LIBS+= -lsocket -lnsl
 endif
 
-#default: all
-default: server
+default: all
 
 all: client server
-
-enet/Makefile:
-	cd enet; ./configure --enable-shared=no --enable-static=yes
-	
-libenet: enet/Makefile
-	$(MAKE)	-C enet/ all
-
-clean-enet: enet/Makefile
-	$(MAKE) -C enet/ clean
 
 clean:
 	-$(RM) $(CLIENT_PCH) $(CLIENT_OBJS) $(SERVER_OBJS) $(MASTER_OBJS) sauer_client sauer_server sauer_master
 
 %.h.gch: %.h
-	$(CXX) $(CXXFLAGS) -o $(subst .h.gch,.tmp.h.gch,$@) $(subst .h.gch,.h,$@)
+	$(CXX) $(CXXFLAGS) -x c++-header -o $(subst .h.gch,.tmp.h.gch,$@) $(subst .h.gch,.h,$@)
 	$(MV) $(subst .h.gch,.tmp.h.gch,$@) $@
 
 %-standalone.o: %.cpp
@@ -201,6 +207,24 @@ ifneq (,$(STRIP))
 	$(STRIP) ../bin_unix/$(PLATFORM_PREFIX)_client
 	$(STRIP) ../bin_unix/$(PLATFORM_PREFIX)_server
 endif
+endif
+
+ifeq (,$(findstring MINGW,$(PLATFORM)))
+CC= $(CXX) -x c
+ENET_CFLAGS:= -Ienet/include -O3 -fomit-frame-pointer $(shell enet/check_cflags.sh $(CC))
+ENET_OBJS= \
+	enet/callbacks.o \
+	enet/host.o \
+	enet/list.o \
+	enet/packet.o \
+	enet/peer.o \
+	enet/protocol.o \
+	enet/unix.o \
+	enet/win32.o
+$(ENET_OBJS): CFLAGS += $(ENET_CFLAGS)
+enet/libenet.a: $(ENET_OBJS)
+	$(AR) rcs $@ $(ENET_OBJS)
+libenet: enet/libenet.a
 endif
 
 depend:
